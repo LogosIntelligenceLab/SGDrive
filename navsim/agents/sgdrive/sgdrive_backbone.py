@@ -26,7 +26,11 @@ DREAM_TOKEN = "<DREAM TOKEN>"
 DREAM_START_TOKEN = "<dream>"
 DREAM_END_TOKEN = "</dream>"
 
-system_message = """
+LEGACY_SYSTEM_MESSAGE = """
+You are a perception model for autonomous driving. Your task is to perceive the scene based on front-view images.
+"""
+
+PDM_SYSTEM_MESSAGE = """
 You are a vehicle trajectory prediction model for autonomous driving. Your task is to predict the ego vehicle's 4-second trajectory based on the following inputs: multi-view images from 8 cameras, ego vehicle states (position), and discrete navigation commands. The input provides a 2-second history, and your output should ensure a safe trajectory for the next 4 seconds. Your predictions must adhere to the following metrics:
 1. **No at-fault Collisions (NC)**: Avoid collisions with other objects/vehicles.
 2. **Drivable Area Compliance (DAC)**: Stay within the drivable area.
@@ -37,6 +41,18 @@ You are a vehicle trajectory prediction model for autonomous driving. Your task 
 For evaluation, use the **PDM Score**, which combines these metrics: **PDM Score** = NC * DAC * (5*TTC + 5*EP + 2*C + 0*DDC) / 12.
 Your predictions will be evaluated through a non-reactive 4-second simulation with an LQR controller and background actors following their recorded trajectories. The better your predictions, the higher your score.
 """
+
+SYSTEM_PROMPTS = {
+    "legacy": LEGACY_SYSTEM_MESSAGE,
+    "pdm": PDM_SYSTEM_MESSAGE,
+}
+system_prompt_variant = os.environ.get("SGDRIVE_SYSTEM_PROMPT", "pdm").lower()
+if system_prompt_variant not in SYSTEM_PROMPTS:
+    raise ValueError(
+        f"Unsupported SGDRIVE_SYSTEM_PROMPT={system_prompt_variant!r}; "
+        f"expected one of {sorted(SYSTEM_PROMPTS)}"
+    )
+system_message = SYSTEM_PROMPTS[system_prompt_variant]
 
 
 class SGDriveBackbone(nn.Module):
@@ -95,8 +111,16 @@ class SGDriveBackbone(nn.Module):
             config = InternVLChatConfig_WM.from_pretrained(checkpoint_path)
             config.output_hidden_states = True
             config.system_message = system_message
-            config.llm_config._attn_implementation = "sdpa"
-            config.llm_config._attn_implementation_internal = "sdpa"
+            attn_implementation = os.environ.get(
+                "SGDRIVE_ATTN_IMPLEMENTATION", "sdpa"
+            ).lower()
+            if attn_implementation not in {"eager", "sdpa"}:
+                raise ValueError(
+                    "SGDRIVE_ATTN_IMPLEMENTATION must be 'eager' or 'sdpa', "
+                    f"got {attn_implementation!r}"
+                )
+            config.llm_config._attn_implementation = attn_implementation
+            config.llm_config._attn_implementation_internal = attn_implementation
 
             self.num_image_token = 256
             if os.getenv("use_world_token", True):
@@ -115,7 +139,12 @@ class SGDriveBackbone(nn.Module):
                 config=config,
                 torch_dtype=torch.bfloat16,   
                 device_map=self.device
-            ).eval()
+            )
+            self.model.config.llm_config._attn_implementation = attn_implementation
+            self.model.config.llm_config.attn_implementation = attn_implementation
+            self.model.language_model.config._attn_implementation = attn_implementation
+            self.model.language_model.config.attn_implementation = attn_implementation
+            self.model.eval()
 
             self.tokenizer = AutoTokenizer.from_pretrained(
                 checkpoint_path,
@@ -317,8 +346,13 @@ class SGDriveBackbone(nn.Module):
                 query = query.replace("<dream>", dream_tokens, 1)
 
             self.tokenizer.padding_side = "left"
-            model_inputs = self.tokenizer(query, padding="max_length", max_length=5000, return_tensors="pt")
-            # model_inputs = self.tokenizer(query, return_tensors="pt", padding="max_length", max_length=5100) #dream+world
+            cache_max_length = int(os.environ.get("SGDRIVE_CACHE_MAX_LENGTH", "5000"))
+            model_inputs = self.tokenizer(
+                query,
+                padding="max_length",
+                max_length=cache_max_length,
+                return_tensors="pt",
+            )
             # model_inputs = self.tokenizer(query, return_tensors="pt", padding="max_length", max_length=4300)
             # model_inputs = self.tokenizer(query, return_tensors="pt", padding="max_length", max_length=(3624 + self.world_token_number))
             device = torch.device("cuda")

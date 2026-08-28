@@ -212,7 +212,7 @@ class Dataset(torch.utils.data.Dataset):
 
         for builder in self._feature_builders:
             data_dict_path = token_path / (builder.get_unique_name() + ".gz")
-            if data_dict_path.exists():
+            if data_dict_path.exists() and not self._force_cache_computation:
                 continue
             data_dict = builder.compute_features(agent_input)
             dump_feature_target_to_pickle(data_dict_path, data_dict)
@@ -1177,4 +1177,3 @@ class BoundingBox2DIndex(IntEnum):
     def STATE_SE2(cls):
         # assumes X, Y, HEADING have subsequent indices
         return slice(cls._X, cls._HEADING + 1)
-

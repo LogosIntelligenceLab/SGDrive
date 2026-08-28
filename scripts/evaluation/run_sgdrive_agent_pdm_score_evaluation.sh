@@ -32,7 +32,7 @@ if [ ! -d "$SAVE_MODEL_PATH" ]; then
 fi
 VLM_PATH='/path/to/internvl_wm_model_save_dir'
 CHECKPOINT="/path/to/sgdrive_agent_dit_checkpoint/*.ckpt"
-CACHE_PATH='/path/to/sgdrive_agent_cache'
+CACHE_PATH=${CACHE_PATH:-$NAVSIM_EXP_ROOT/sgdrive_agent_cache_5000_worldmask_${TRAIN_TEST_SPLIT}}
 METRIC_CACHE_PATH='/path/to/metric_cache'
 
 

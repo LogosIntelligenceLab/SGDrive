@@ -114,9 +114,12 @@ class SGDriveFeatureBuilder(AbstractFeatureBuilder):
                 output_requirements = "\nOutput requirements:\n- Predict 8 future trajectory points\n- Each point format: (x:float, y:float, heading:float)\n- Use [PT, ...] to encapsulate the trajectory\n- Maintain numerical precision to 2 decimal places"
                 questions = [f"{prompt}{output_requirements}"]
 
-                outputs = self.backbone(
-                    pixel_values_cat.cuda(), questions, num_patches_list=num_patches_list
-                )
+                with torch.inference_mode():
+                    outputs = self.backbone(
+                        pixel_values_cat.cuda(),
+                        questions,
+                        num_patches_list=num_patches_list,
+                    )
                 last_hidden_state = outputs.hidden_states[-1]
 
                 return {
@@ -168,8 +171,13 @@ class SGDriveFeatureBuilder(AbstractFeatureBuilder):
                 #     "gp_hidden_state":gp_hidden_state.squeeze(0).float().cpu()
                 # }
 
-                outputs  = self.backbone(
-                    pixel_values.cuda(), questions, num_patches_list=num_patches_list, ego_status=ego_statuses)
+                with torch.inference_mode():
+                    outputs = self.backbone(
+                        pixel_values.cuda(),
+                        questions,
+                        num_patches_list=num_patches_list,
+                        ego_status=ego_statuses,
+                    )
                 def safe_get_dict(d, key, default=None):
                     return d[key] if key in d and d[key] is not None else default
 
@@ -184,6 +192,25 @@ class SGDriveFeatureBuilder(AbstractFeatureBuilder):
                 gp_hidden_state    = safe_get_dict(outputs, 'gp_out')
                 dream_occ_hidden_state   = safe_get_dict(outputs, 'dream_occ_out')
                 dream_agent_hidden_state = safe_get_dict(outputs, 'dream_agent_out')
+
+                hidden_states = {
+                    "last_hidden_state": last_hidden_state,
+                    "occ_hidden_state": occ_hidden_state,
+                    "agent_hidden_state": agent_hidden_state,
+                    "gp_hidden_state": gp_hidden_state,
+                    "dream_occ_hidden_state": dream_occ_hidden_state,
+                    "dream_agent_hidden_state": dream_agent_hidden_state,
+                }
+                non_finite = [
+                    name
+                    for name, value in hidden_states.items()
+                    if value is not None and not torch.isfinite(value).all()
+                ]
+                if non_finite:
+                    raise FloatingPointError(
+                        "Refusing to cache non-finite SGDrive hidden states: "
+                        + ", ".join(non_finite)
+                    )
 
                 return {
                     "history_trajectory": history_trajectory.cpu(),

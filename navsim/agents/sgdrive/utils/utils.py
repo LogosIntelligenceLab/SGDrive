@@ -1,3 +1,5 @@
+import os
+
 from omegaconf import DictConfig, OmegaConf
 
 
@@ -21,10 +23,17 @@ def _to_scalar(value):
 
 def format_history_context(history_trajectory):
     history_len = len(history_trajectory)
+    prompt_format = os.environ.get("SGDRIVE_HISTORY_PROMPT_FORMAT", "legacy").lower()
+    if prompt_format not in {"current", "legacy"}:
+        raise ValueError(
+            "SGDRIVE_HISTORY_PROMPT_FORMAT must be 'current' or 'legacy', "
+            f"got {prompt_format!r}"
+        )
+    prefix = "-t-" if prompt_format == "current" else "   - t-"
     return " ".join(
         [
             (
-                f"-t-{history_len - 1 - i}: "
+                f"{prefix}{history_len - 1 - i}: "
                 f"({format_number(_to_scalar(history_trajectory[i][0]))}, "
                 f"{format_number(_to_scalar(history_trajectory[i][1]))}, "
                 f"{format_number(_to_scalar(history_trajectory[i][2]))})"

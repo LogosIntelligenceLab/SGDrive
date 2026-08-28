@@ -712,7 +712,18 @@ class InternVLChatModel_WM(PreTrainedModel):
 
         input_embeds = input_embeds.reshape(B, N, C)
 
-        # attention_mask = self.cache_generate_attention_mask(input_embeds, input_ids) #important
+        cache_attention_mask = os.environ.get(
+            "SGDRIVE_CACHE_ATTENTION_MASK", "world"
+        ).lower()
+        if cache_attention_mask == "world":
+            attention_mask = self.cache_generate_attention_mask(
+                input_embeds, input_ids
+            )
+        elif cache_attention_mask != "padding":
+            raise ValueError(
+                "SGDRIVE_CACHE_ATTENTION_MASK must be 'padding' or 'world', "
+                f"got {cache_attention_mask!r}"
+            )
 
         outputs = self.language_model(
             inputs_embeds=input_embeds,
@@ -740,48 +751,72 @@ class InternVLChatModel_WM(PreTrainedModel):
         self.gp_token_number = int(os.getenv("GP_TOKEN_NUMBER", 1))
         B, N, C = input_embeds.shape
         attention_masks = []
+        input_ids = input_ids.reshape(B, N)
         for i in range(B):
             attention_mask = torch.tril(
                 torch.ones(N, N, device=input_embeds.device, dtype=torch.bool)
             )
-            batch_selected = torch.argwhere(input_ids == self.world_token_id)
-        
-            if len(batch_selected) >= (self.occ_token_number + self.agent_token_number + self.gp_token_number ):
+            world_idx = torch.argwhere(input_ids[i] == self.world_token_id).flatten()
+            expected_world_tokens = (
+                self.occ_token_number
+                + self.agent_token_number
+                + self.gp_token_number
+            )
 
-                occ_idx = batch_selected[:self.occ_token_number, 0]
-                attention_mask[occ_idx[:, None], occ_idx] = 1
-                agent_idx = batch_selected[self.occ_token_number:self.occ_token_number+self.agent_token_number, 0]
-                attention_mask[agent_idx[:, None], agent_idx] = 1
-                goal_idx = batch_selected[self.occ_token_number+self.agent_token_number:self.occ_token_number+self.agent_token_number+self.gp_token_number, 0]
-                attention_mask[goal_idx[:, None], goal_idx] = 1
-                
-                # attention_mask[occ_idx[:, None], agent_idx] = 1
+            if len(world_idx) >= expected_world_tokens:
+                occ_idx = world_idx[: self.occ_token_number]
+                agent_idx = world_idx[
+                    self.occ_token_number : self.occ_token_number
+                    + self.agent_token_number
+                ]
+                goal_idx = world_idx[
+                    self.occ_token_number
+                    + self.agent_token_number : expected_world_tokens
+                ]
 
-                attention_mask[agent_idx[:, None], occ_idx] = 0
-                attention_mask[goal_idx[:, None], occ_idx] = 0
-                attention_mask[goal_idx[:, None], agent_idx] = 0
+                attention_mask[occ_idx[:, None], occ_idx] = True
+                attention_mask[agent_idx[:, None], agent_idx] = True
+                attention_mask[goal_idx[:, None], goal_idx] = True
+                attention_mask[agent_idx[:, None], occ_idx] = False
+                attention_mask[goal_idx[:, None], occ_idx] = False
+                attention_mask[goal_idx[:, None], agent_idx] = False
 
             if self.dream_world:
-                batch_selected_dream = torch.argwhere(input_ids == self.dream_token_id)
-                occ_idx_dream = batch_selected_dream[:self.occ_token_number, 0]
-                attention_mask[occ_idx_dream[:, None], occ_idx_dream] = 1
+                dream_idx = torch.argwhere(
+                    input_ids[i] == self.dream_token_id
+                ).flatten()
+                expected_dream_tokens = (
+                    self.occ_token_number + self.agent_token_number
+                )
+                if (
+                    len(world_idx) >= expected_world_tokens
+                    and len(dream_idx) >= expected_dream_tokens
+                ):
+                    occ_idx_dream = dream_idx[: self.occ_token_number]
+                    agent_idx_dream = dream_idx[
+                        self.occ_token_number : expected_dream_tokens
+                    ]
 
-                agent_idx_dream = batch_selected_dream[self.occ_token_number:self.occ_token_number+self.agent_token_number, 0]
-                attention_mask[agent_idx_dream[:, None], agent_idx_dream] = 1
+                    attention_mask[
+                        occ_idx_dream[:, None], occ_idx_dream
+                    ] = True
+                    attention_mask[
+                        agent_idx_dream[:, None], agent_idx_dream
+                    ] = True
+                    attention_mask[occ_idx_dream[:, None], agent_idx] = False
+                    attention_mask[occ_idx_dream[:, None], goal_idx] = False
+                    attention_mask[agent_idx_dream[:, None], occ_idx] = False
+                    attention_mask[
+                        agent_idx_dream[:, None], occ_idx_dream
+                    ] = False
+                    attention_mask[agent_idx_dream[:, None], goal_idx] = False
 
-                attention_mask[occ_idx_dream[:, None], agent_idx] = 0
-                attention_mask[occ_idx_dream[:, None], goal_idx] = 0
-                attention_mask[agent_idx_dream[:, None], occ_idx] = 0
-                attention_mask[agent_idx_dream[:, None], occ_idx_dream] = 0
-                attention_mask[agent_idx_dream[:, None], goal_idx] = 0
-                
             attention_masks.append(attention_mask.unsqueeze(0))
 
-        attention_mask = torch.cat(attention_masks, dim=0).unsqueeze(1)
-        additive_mask = torch.zeros_like(attention_mask, dtype=input_embeds.dtype)
-        return additive_mask.masked_fill(
-            ~attention_mask, torch.finfo(input_embeds.dtype).min
-        )
+        # Qwen2/Transformers 4.37 converts a 4D keep-mask to SDPA's additive
+        # representation. Passing an already-additive mask here inverts it a
+        # second time and masks every row.
+        return torch.cat(attention_masks, dim=0).unsqueeze(1)
 
 
     def pixel_shuffle(self, x, scale_factor=0.5):
