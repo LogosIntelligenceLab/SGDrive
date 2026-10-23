@@ -13,7 +13,7 @@ Xianpeng Lang<sup>3</sup>, Xiatian Zhu<sup>5</sup>, [Li Zhang](https://lzrobots.
 
 CVPR 2026 Poster
 
-<a href="[https://arxiv.org/abs/2601.05640](https://arxiv.org/abs/2601.05640)"><img src='https://img.shields.io/badge/arXiv-SGDrive-red' alt='Paper PDF'></a>
+<a href="https://arxiv.org/abs/2601.05640"><img src='https://img.shields.io/badge/arXiv-SGDrive-red' alt='Paper PDF'></a>
 </div>
 
 

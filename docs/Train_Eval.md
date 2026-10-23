@@ -17,7 +17,7 @@ sh ./internvl_chat/shell/internvl3.0/2nd_finetune/internvl3_2b_dynamic_res_2nd_f
 
 ## Stage 2: Diffusion Planner Imitation Learning
 
-You can download our pretrained **SGDrive VLM** from [SGDrive VLM](coming soon).  
+You can download our pretrained **SGDrive VLM** from SGDrive VLM (coming soon).<br>
 
 For the diffusion planner training, the first step is to **cache datasets for faster training**.  
 Since DiT training converges relatively slowly, training VLM and DiT jointly can be very time-consuming. To accelerate, we cache the hidden states output by the VLM, which enables much faster training.  
